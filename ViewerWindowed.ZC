@@ -1,0 +1,175 @@
+class @viewer {
+  CTask *windowTask;
+  CDC **images;
+  I64 pressing_button;
+  I64 prev_lb_state;
+  I64 prev_rb_state;
+};
+@viewer viewer;
+
+U8 **windowPixelMap;
+U8 **old_windowPixelMap;
+
+Bool is_done = FALSE;
+I64 y, x;
+CBGR24	color;
+CBGR24 **colorArray = PNGReadToColorArray("Images/CLASSICAL.png");
+
+// Allocate memory for the pixel maps
+U0 AllocPixelMaps(I64 win_height, I64 win_width) {
+  I64 i;
+  windowPixelMap = MAlloc(win_height * sizeof(U8 *));
+  old_windowPixelMap = MAlloc(win_height * sizeof(U8 *));
+  for (i = 0; i < win_height; i++) {
+    windowPixelMap[i] = MAlloc(win_width * sizeof(U8));
+    old_windowPixelMap[i] = MAlloc(win_width * sizeof(U8));
+  }
+}
+
+U0 FreePixelMaps(I64 win_height) {
+  I64 i;
+  if(windowPixelMap && old_windowPixelMap) {
+    for (i = 0; i < win_height; i++) {
+      if(windowPixelMap[i])
+        Free(windowPixelMap[i]);
+      if(old_windowPixelMap[i])
+        Free(old_windowPixelMap[i]);
+    }
+    Free(windowPixelMap);
+    Free(old_windowPixelMap);
+    windowPixelMap = NULL;
+    old_windowPixelMap = NULL;
+  }
+}
+
+
+Bool WindowCalcTask() {
+  I64 old_width = 0;
+  I64 old_height = 0;
+
+  I64 width = viewer.windowTask->win_right - viewer.windowTask->win_left;
+  I64 height = viewer.windowTask->win_bottom - viewer.windowTask->win_top;
+
+  if (width == old_width && height == old_height)
+    return FALSE;  // If dimensions have not changed, return.
+
+  old_width = width;
+  old_height = height;
+
+  // Resize the pixel maps based on the new dimensions.
+  FreePixelMaps(height * 8);
+  AllocPixelMaps(height * 8, width * 8);
+
+  // Mark the current window as active in the pixel map.
+  I64 win_x, win_y;
+  for (win_y = 0; win_y < (height * 8); win_y++) {
+    for (win_x = 0; win_x < (width * 8); win_x++) {
+      windowPixelMap[win_y][win_x] = 1;
+    }
+  }
+
+  Refresh;
+  return TRUE;
+}
+
+
+I0 DrawPixel(I64 x, I64 y, CBGR24 color)
+{
+    I64 adjusted_x = x + viewer.windowTask->win_left*8;
+    I64 adjusted_y = y + viewer.windowTask->win_top*8;
+    text.fb_alias[adjusted_x + adjusted_y * GR_WIDTH] = color;
+}
+
+U0 DrawViewer() {
+  while(1) {
+    for (y = 0; y < (viewer.windowTask->win_bottom - viewer.windowTask->win_top)*8; y++) {
+y_loop:
+      for (x = 0; x < (viewer.windowTask->win_right - viewer.windowTask->win_left)*8; x++) {
+        // Skip the pixel if it's overlapped by another window
+        if (windowPixelMap[y][x] == 2)
+          goto y_loop;
+        
+        CBGR24 pixelColor = colorArray[y][x];
+        U32 r = pixelColor.r;
+        U32 g = pixelColor.g;
+        U32 b = pixelColor.b;
+        U32 a = 0xFF;
+        U32 color32 = (a << 24) | (r << 16) | (g << 8) | b;
+
+        if (windowPixelMap[y][x] == 1) {
+            DrawPixel(x, y, color32);
+        }
+      }
+    }
+    Refresh;
+  }
+}
+
+
+U0 InitViewer() {
+  // MemSet(&viewer, sizeof(@viewer), NULL);
+  viewer.windowTask = Fs;
+  viewer.windowTask->win_width = 35;
+  WinHorz((TEXT_COLS / 2) - (viewer.windowTask->win_width / 2),
+          (TEXT_COLS / 2) - (viewer.windowTask->win_width / 2) +
+              (viewer.windowTask->win_width - 1),
+          viewer.windowTask);
+  viewer.windowTask->win_height = 15;
+  WinVert((TEXT_ROWS / 2) - (viewer.windowTask->win_height / 2),
+          (TEXT_ROWS / 2) - (viewer.windowTask->win_height / 2) +
+              (viewer.windowTask->win_height - 1),
+          viewer.windowTask);
+
+  DocCursor(OFF);
+
+  CTask *wincalc_task = Spawn(&WindowCalcTask, , "Window Calc Task", 1);
+  CTask *draw_task = Spawn(&DrawViewer, , "Draw PNG Task 1", 3);
+ 
+
+  I64 sc = 0;
+  I64 i;
+
+  try
+  {
+    while (!is_done)
+    {
+      switch (KeyGet(&sc))
+      {
+        case 0:
+          switch (sc.u8[0])
+          {
+            case SC_CURSOR_UP:
+            case SC_CURSOR_LEFT:
+              break;
+            case SC_CURSOR_DOWN:
+            case SC_CURSOR_RIGHT:
+              break;		
+          }
+          break;
+        case CH_CTRLO:
+          break;
+
+        case CH_SHIFT_ESC:
+          is_done = TRUE;
+          break;
+      }
+    }
+
+    // After all pixels have been drawn
+    for (i = 0; i < y; i++) {
+      Free(colorArray[i]);
+    }
+    Free(colorArray);
+    LFBFlush;
+    Kill(wincalc_task);
+    Kill(draw_task);
+    PutExcept;
+  }
+  catch
+  {
+    Kill(wincalc_task);
+    Kill(draw_task);
+    PutExcept;
+  }
+
+}

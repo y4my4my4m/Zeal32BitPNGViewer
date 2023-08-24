@@ -1,0 +1,240 @@
+class @viewer {
+  CTask *windowTask;
+  CDC **images;
+  I64 pressing_button;
+  I64 prev_lb_state;
+  I64 prev_rb_state;
+};
+@viewer viewer;
+
+class DrawViewerArgs {
+    I64 xStart;
+    I64 yStart;
+    I64 xEnd;
+    I64 yEnd;
+};
+
+// I64 mp_not_done_flags, grand_total;
+U8 windowPixelMap[GR_HEIGHT][GR_WIDTH]; 
+U8 old_windowPixelMap[GR_HEIGHT][GR_WIDTH]; 
+
+#define IMG_MAIN viewer.images[0]
+
+Bool is_done = FALSE;
+I64 y, x;
+CBGR24	color;
+CBGR24 **colorArray = PNGReadToColorArray("Images/ROME.png");
+
+I64 CoreSync = 0;
+
+Bool DifferencePercentage() {
+  while (1) {
+    // if (CoreSync != 4 ) return;
+    I64 totalPixels = 0;
+    F64 differentPixels = 0;
+    I64 i, j;
+    for ( i = 0; i < GR_HEIGHT; i++) {
+        for ( j = 0; j < GR_WIDTH; j++) {
+            if (old_windowPixelMap[i][j] != windowPixelMap[i][j]) {
+                differentPixels++;
+            }
+            totalPixels++;
+        }
+    }
+    if (CoreSync == 4 && (((differentPixels / totalPixels) * 100) > 1.333334)) {
+        LFBFlush();
+        CoreSync = 0;
+    }
+    Refresh;
+    // Sleep(100);
+  }
+  return FALSE;  // This task should not end on its own
+}
+
+
+Bool WindowCalcTask() {
+  while (1) {
+
+    while (CoreSync < 4) {
+      Yield(); // yield CPU to other tasks
+    }
+    // Reset CoreSync
+    lock {
+      CoreSync = 0;
+    }
+    // if (CoreSync != 4 ) return;
+    // Clear the windowPixelMap
+    MemCopy(old_windowPixelMap, windowPixelMap, sizeof(windowPixelMap));
+
+    MemSet(windowPixelMap, 0, sizeof(windowPixelMap));
+    I64 task_count = 0, win_y, win_x;
+    CTask* current_task = sys_task;
+    while (current_task != NULL && task_count < sys_num_spawned_tasks) {
+      if(!Bt(&current_task->win_inhibit, WIf_SELF_KEY_DESC)){
+        for ( win_y = (current_task->win_top*8) - 8; win_y < (current_task->win_bottom*8) + 16; win_y++) {
+          for ( win_x = (current_task->win_left*8) - 8; win_x < (current_task->win_right*8) + 16; win_x++) {
+            windowPixelMap[win_y][win_x] = 1;
+          }
+        }
+      }
+      current_task = current_task->next_task;
+      task_count++;
+    }
+
+    // Check if the map has changed
+    // if (!MapsAreEqual()) {
+    //     LFBFlush();
+    // }
+    // F64 diffPercentage = DifferencePercentage;
+    // SysLog("DifferencePercentage: %f\n", diffPercentage);
+    // if (diffPercentage > 3) {
+    //     LFBFlush();
+    // }
+    Refresh;
+    // Sleep(100);
+  }
+  return FALSE;  // This task should not end on its own
+}
+
+I0 DrawPixel(I64 x, I64 y, CBGR24 color)
+{
+  text.fb_alias[x + y * GR_WIDTH] = color;
+}
+
+U0 DrawViewer(U8* data) {
+  DrawViewerArgs* args = data;
+  while(1) {
+    for ( y = args->yStart; y < args->yEnd; y++)
+    {
+      for ( x = args->xStart; x < args->xEnd; x++)
+      {
+        CBGR24 pixelColor = colorArray[y][x];  // Grab the pixel color from your color array
+
+        U32 r = pixelColor.r;
+        U32 g = pixelColor.g;
+        U32 b = pixelColor.b;
+        U32 a = 0xFF;  // Maximum opacity
+
+        U32 color32 = (a << 24) | (r << 16) | (g << 8) | b;
+
+        if (windowPixelMap[y][x] == 0) {
+          DrawPixel(x, y, color32);
+        }
+      }
+    }
+    Refresh;
+    lock {
+      CoreSync++;
+    }
+    // Sleep(100);
+  }
+}
+
+U0 InitViewer() {
+  MemSet(&viewer, sizeof(@viewer), NULL);
+  viewer.windowTask = Fs;
+  viewer.windowTask->win_width = 35;
+  WinHorz((TEXT_COLS / 2) - (viewer.windowTask->win_width / 2),
+          (TEXT_COLS / 2) - (viewer.windowTask->win_width / 2) +
+              (viewer.windowTask->win_width - 1),
+          viewer.windowTask);
+  viewer.windowTask->win_height = 15;
+  WinVert((TEXT_ROWS / 2) - (viewer.windowTask->win_height / 2),
+          (TEXT_ROWS / 2) - (viewer.windowTask->win_height / 2) +
+              (viewer.windowTask->win_height - 1),
+          viewer.windowTask);
+
+  // WinBorder(OFF);
+  DocCursor(OFF);
+  viewer.images = CAlloc(sizeof(CDC *) * 32);
+
+  DrawViewerArgs draw1_args;
+  draw1_args.xStart = 0;
+  draw1_args.yStart = (sys_task->win_bottom*8)+16;
+  draw1_args.xEnd =  GR_WIDTH / 2;
+  draw1_args.yEnd =  GR_HEIGHT / 2;
+
+  DrawViewerArgs draw2_args;
+  draw2_args.xStart = GR_WIDTH / 2;
+  draw2_args.yStart = (sys_task->win_bottom*8)+16;
+  draw2_args.xEnd =  GR_WIDTH;
+  draw2_args.yEnd =  GR_HEIGHT / 2;
+
+  DrawViewerArgs draw3_args;
+  draw3_args.xStart = 0;
+  draw3_args.yStart = GR_HEIGHT / 2;
+  draw3_args.xEnd = GR_WIDTH / 2;
+  draw3_args.yEnd = GR_HEIGHT;
+
+  DrawViewerArgs draw4_args;
+  draw4_args.xStart = GR_WIDTH / 2;
+  draw4_args.yStart = GR_HEIGHT / 2;
+  draw4_args.xEnd = GR_WIDTH;
+  draw4_args.yEnd = GR_HEIGHT;
+
+  CTask *wincalc_task = Spawn(&WindowCalcTask, , "Window Calc Task", 1);
+  CTask *diff_task  = Spawn(&DifferencePercentage, , "Difference Window Calc Task", 2);
+  CTask *draw1_task = Spawn(&DrawViewer, &draw1_args, "Draw PNG Task 1", 3);
+  CTask *draw2_task = Spawn(&DrawViewer, &draw2_args, "Draw PNG Task 2", 4);
+  CTask *draw3_task = Spawn(&DrawViewer, &draw3_args, "Draw PNG Task 3", 5);
+  CTask *draw4_task = Spawn(&DrawViewer, &draw4_args, "Draw PNG Task 4", 6);
+
+  I64 i, sc = 0;
+
+  try
+  {
+    while (!is_done)
+    {
+      // The silliest v-sync in the world
+      // Sleep(winmgr.fps);
+      // LFBFlush;
+      switch (KeyGet(&sc))
+      {
+        case 0:
+          switch (sc.u8[0])
+          {
+            case SC_CURSOR_UP:
+            case SC_CURSOR_LEFT:
+              break;
+            case SC_CURSOR_DOWN:
+            case SC_CURSOR_RIGHT:
+              break;		
+          }
+          break;
+        case CH_CTRLO:
+          break;
+
+        case CH_SHIFT_ESC:
+          is_done = TRUE;
+      }
+    }
+
+    // After all pixels have been drawn
+    for (i = 0; i < y; i++) {
+      Free(colorArray[i]);
+    }
+    Free(colorArray);
+    LFBFlush;
+    Kill(wincalc_task);
+    Kill(diff_task);
+    Kill(draw1_task);
+    Kill(draw2_task);
+    Kill(draw3_task);
+    Kill(draw4_task);
+    PutExcept;
+  }
+  catch
+    for (i = 0; i < y; i++) {
+      Free(colorArray[i]);
+    }
+    Free(colorArray);
+    Kill(wincalc_task);
+    Kill(diff_task);
+    Kill(draw1_task);
+    Kill(draw2_task);
+    Kill(draw3_task);
+    Kill(draw4_task);
+    PutExcept;
+    
+
+}
